@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}429 Too Many Requests - Cloud IDS{% endblock %}
+{% block content %}
+<div class="text-center mt-5">
+  <i class="bi bi-hourglass-split text-warning" style="font-size:5rem;"></i>
+  <h1 class="text-white mt-3">429</h1>
+  <p class="text-muted">Too many requests — please wait a moment before trying again.</p>
+  <a href="{{ url_for('dashboard.index') }}" class="btn btn-danger mt-2">Go to Dashboard</a>
+</div>
+{% endblock %}
+{% block public_content %}{{ self.content() }}{% endblock %}

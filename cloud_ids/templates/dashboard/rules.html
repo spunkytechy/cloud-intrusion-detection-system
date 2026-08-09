@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}Detection Rules - Cloud IDS{% endblock %}
+{% block content %}
+<h4 class="mb-4 text-white"><i class="bi bi-sliders me-2"></i>Detection Rules</h4>
+
+<div class="card bg-dark border-secondary">
+  <div class="table-responsive">
+    <table class="table table-dark table-hover mb-0">
+      <thead class="border-secondary">
+        <tr><th>Rule</th><th>Type</th><th>Threshold</th><th>Window (s)</th><th>Severity</th><th>Status</th><th>Actions</th></tr>
+      </thead>
+      <tbody>
+        {% for r in rules %}
+        <tr>
+          <td>
+            <div class="fw-semibold text-white">{{ r.rule_name }}</div>
+            <div class="text-muted small">{{ r.description }}</div>
+          </td>
+          <td><span class="badge bg-secondary">{{ r.rule_type }}</span></td>
+          <td class="text-white">{{ r.threshold }}</td>
+          <td class="text-white">{{ r.window }}</td>
+          <td>
+            <span class="badge {% if r.severity=='critical' %}bg-danger{% elif r.severity=='high' %}bg-warning text-dark{% elif r.severity=='medium' %}bg-info text-dark{% else %}bg-secondary{% endif %}">
+              {{ r.severity }}
+            </span>
+          </td>
+          <td>
+            {% if r.enabled %}<span class="badge bg-success">Enabled</span>
+            {% else %}<span class="badge bg-secondary">Disabled</span>{% endif %}
+          </td>
+          <td>
+            <div class="d-flex gap-1">
+              <!-- Toggle -->
+              <form method="POST" action="{{ url_for('rules.toggle', rule_id=r.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                <button class="btn btn-sm {% if r.enabled %}btn-outline-warning{% else %}btn-outline-success{% endif %}">
+                  {% if r.enabled %}Disable{% else %}Enable{% endif %}
+                </button>
+              </form>
+              <!-- Edit (admin only) -->
+              {% if current_user.is_admin() %}
+              <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal"
+                      data-bs-target="#editModal{{ r.id }}">Edit</button>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+
+        <!-- Edit Modal -->
+        {% if current_user.is_admin() %}
+        <div class="modal fade" id="editModal{{ r.id }}" tabindex="-1">
+          <div class="modal-dialog">
+            <div class="modal-content bg-dark border-secondary text-white">
+              <div class="modal-header border-secondary">
+                <h5 class="modal-title">Edit: {{ r.rule_name }}</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+              </div>
+              <form method="POST" action="{{ url_for('rules.edit', rule_id=r.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                <div class="modal-body">
+                  <div class="mb-3">
+                    <label class="form-label">Threshold</label>
+                    <input type="number" name="threshold" value="{{ r.threshold }}"
+                           class="form-control bg-secondary border-0 text-white" required/>
+                  </div>
+                  <div class="mb-3">
+                    <label class="form-label">Window (seconds)</label>
+                    <input type="number" name="window" value="{{ r.window }}"
+                           class="form-control bg-secondary border-0 text-white" required/>
+                  </div>
+                  <div class="mb-3">
+                    <label class="form-label">Severity</label>
+                    <select name="severity" class="form-select bg-secondary border-0 text-white">
+                      {% for s in ['critical','high','medium','low'] %}
+                      <option value="{{ s }}" {% if r.severity==s %}selected{% endif %}>{{ s|capitalize }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                </div>
+                <div class="modal-footer border-secondary">
+                  <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                  <button type="submit" class="btn btn-danger">Save</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+        {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

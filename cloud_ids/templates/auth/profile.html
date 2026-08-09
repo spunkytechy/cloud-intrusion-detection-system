@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Profile - Cloud IDS{% endblock %}
+{% block content %}
+<h4 class="mb-4 text-white"><i class="bi bi-person-circle me-2"></i>My Profile</h4>
+<div class="row">
+  <div class="col-md-6">
+    <div class="card bg-dark border-secondary mb-4">
+      <div class="card-header border-secondary"><strong class="text-white">Account Info</strong></div>
+      <div class="card-body">
+        <p class="text-muted mb-1">Username</p><p class="text-white">{{ user.username }}</p>
+        <p class="text-muted mb-1">Email</p><p class="text-white">{{ user.email }}</p>
+        <p class="text-muted mb-1">Role</p><p><span class="badge bg-danger">{{ user.role }}</span></p>
+        <p class="text-muted mb-1">Last Login</p>
+        <p class="text-white">{{ user.last_login.strftime('%Y-%m-%d %H:%M UTC') if user.last_login else 'N/A' }}</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card bg-dark border-secondary">
+      <div class="card-header border-secondary"><strong class="text-white">Change Password</strong></div>
+      <div class="card-body">
+        <form method="POST" action="{{ url_for('auth.change_password') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+          <div class="mb-3">
+            <label class="form-label text-white">Current Password</label>
+            <input type="password" name="current_password" class="form-control bg-secondary border-0 text-white" required/>
+          </div>
+          <div class="mb-3">
+            <label class="form-label text-white">New Password</label>
+            <input type="password" name="new_password" class="form-control bg-secondary border-0 text-white" required minlength="8"/>
+          </div>
+          <div class="mb-3">
+            <label class="form-label text-white">Confirm New Password</label>
+            <input type="password" name="confirm_password" class="form-control bg-secondary border-0 text-white" required/>
+          </div>
+          <button type="submit" class="btn btn-danger">Update Password</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}401 Unauthorized - Cloud IDS{% endblock %}
+{% block content %}
+<div class="text-center mt-5">
+  <i class="bi bi-lock text-danger" style="font-size:5rem;"></i>
+  <h1 class="text-white mt-3">401</h1>
+  <p class="text-muted">Unauthorized — please log in to access this page.</p>
+  <a href="{{ url_for('auth.login') }}" class="btn btn-danger mt-2">Login</a>
+</div>
+{% endblock %}
+{% block public_content %}{{ self.content() }}{% endblock %}

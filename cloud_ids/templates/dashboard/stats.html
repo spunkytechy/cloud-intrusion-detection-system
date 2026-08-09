@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Statistics - Cloud IDS{% endblock %}
+{% block content %}
+<h4 class="mb-4 text-white"><i class="bi bi-bar-chart me-2"></i>Statistics</h4>
+
+<div class="row g-3 mb-4">
+  <div class="col-lg-8">
+    <div class="card bg-dark border-secondary">
+      <div class="card-header border-secondary"><span class="text-white fw-semibold">Traffic (Last 24h)</span></div>
+      <div class="card-body"><canvas id="hourlyChart" height="100"></canvas></div>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card bg-dark border-secondary">
+      <div class="card-header border-secondary"><span class="text-white fw-semibold">Protocol Distribution</span></div>
+      <div class="card-body"><canvas id="protoChart"></canvas></div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-6">
+    <div class="card bg-dark border-secondary">
+      <div class="card-header border-secondary"><span class="text-white fw-semibold">Threats by Type</span></div>
+      <div class="card-body"><canvas id="threatBarChart" height="160"></canvas></div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card bg-dark border-secondary">
+      <div class="card-header border-secondary"><span class="text-white fw-semibold">Alerts by Severity</span></div>
+      <div class="card-body"><canvas id="sevChart" height="160"></canvas></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+if (typeof Chart !== 'undefined') {
+  const chartDefaults = { scales: {
+    x: { ticks:{color:"#aaa"}, grid:{color:"#333"} },
+    y: { ticks:{color:"#aaa"}, grid:{color:"#333"}, beginAtZero:true }
+  }, plugins:{ legend:{ labels:{color:"#fff"} } } };
+
+  const hourlyEl = document.getElementById("hourlyChart");
+  if (hourlyEl) {
+    new Chart(hourlyEl, { type:"line",
+      data:{ labels:{{ labels|tojson }}, datasets:[{ label:"Packets", data:{{ traffic|tojson }},
+        borderColor:"#0dcaf0", backgroundColor:"rgba(13,202,240,0.1)", fill:true, tension:0.4 }]},
+      options: chartDefaults });
+  }
+
+  const protoEl = document.getElementById("protoChart");
+  if (protoEl) {
+    new Chart(protoEl, { type:"doughnut",
+      data:{ labels:{{ proto_labels|tojson }},
+        datasets:[{ data:{{ proto_counts|tojson }},
+          backgroundColor:["#0dcaf0","#6f42c1","#fd7e14","#20c997","#dc3545"] }]},
+      options:{ plugins:{legend:{labels:{color:"#fff",font:{size:11}}}} } });
+  }
+
+  const threatEl = document.getElementById("threatBarChart");
+  if (threatEl) {
+    new Chart(threatEl, { type:"bar",
+      data:{ labels:{{ threat_counts.keys()|list|tojson }},
+        datasets:[{ label:"Alerts", data:{{ threat_counts.values()|list|tojson }},
+          backgroundColor:"#dc3545" }]},
+      options: chartDefaults });
+  }
+
+  const sevEl = document.getElementById("sevChart");
+  if (sevEl) {
+    new Chart(sevEl, { type:"bar",
+      data:{ labels:["Critical","High","Medium","Low"],
+        datasets:[{ label:"Count",
+          data:[{{ sev_counts.get('critical',0) }},{{ sev_counts.get('high',0) }},{{ sev_counts.get('medium',0) }},{{ sev_counts.get('low',0) }}],
+          backgroundColor:["#dc3545","#fd7e14","#0dcaf0","#6c757d"] }]},
+      options: chartDefaults });
+  }
+}
+</script>
+{% endblock %}

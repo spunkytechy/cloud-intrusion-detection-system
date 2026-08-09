@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Register — Cloud IDS{% endblock %}
+{% block public_content %}
+<div style="background:#1e1e2e;border:1px solid #333;border-radius:12px;padding:2rem;">
+  <div class="text-center mb-4">
+    <i class="bi bi-shield-exclamation" style="font-size:3rem;color:#dc3545;"></i>
+    <h4 class="mt-2" style="color:#fff;">Create Account</h4>
+  </div>
+
+  <form method="POST" action="{{ url_for('auth.register') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+    <div class="mb-3">
+      <label class="form-label" style="color:#ccc;">Username</label>
+      <input type="text" name="username" class="form-control" placeholder="Choose a username" required/>
+    </div>
+    <div class="mb-3">
+      <label class="form-label" style="color:#ccc;">Email</label>
+      <input type="email" name="email" class="form-control" placeholder="you@example.com" required/>
+    </div>
+    <div class="mb-3">
+      <label class="form-label" style="color:#ccc;">Password</label>
+      <input type="password" name="password" class="form-control" placeholder="Min. 8 characters" required minlength="8"/>
+    </div>
+    <div class="mb-3">
+      <label class="form-label" style="color:#ccc;">Confirm Password</label>
+      <input type="password" name="confirm_password" class="form-control" placeholder="Repeat password" required/>
+    </div>
+    <button type="submit" class="btn btn-danger w-100">Create Account</button>
+  </form>
+
+  <hr style="border-color:#333;margin:1.25rem 0;"/>
+  <p class="text-center mb-0" style="color:#888;font-size:.875rem;">
+    Have an account?
+    <a href="{{ url_for('auth.login') }}" style="color:#dc3545;">Login</a>
+  </p>
+</div>
+{% endblock %}

@@ -1,0 +1,62 @@
+version: "3.9"
+
+services:
+
+  # ------------------------------------------------------------------
+  # Flask Application
+  # ------------------------------------------------------------------
+  web:
+    build: .
+    container_name: cloud_ids_web
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    env_file:
+      - .env
+    environment:
+      - FLASK_ENV=production
+      - FLASK_DEBUG=0
+    volumes:
+      - ./logs:/app/logs
+    depends_on:
+      - redis
+    networks:
+      - ids_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ------------------------------------------------------------------
+  # Nginx Reverse Proxy
+  # ------------------------------------------------------------------
+  nginx:
+    image: nginx:alpine
+    container_name: cloud_ids_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - web
+    networks:
+      - ids_network
+
+  # ------------------------------------------------------------------
+  # Redis (rate limiting + SocketIO message queue)
+  # ------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: cloud_ids_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --save "" --appendonly no
+    networks:
+      - ids_network
+
+networks:
+  ids_network:
+    driver: bridge

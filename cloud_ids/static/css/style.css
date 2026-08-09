@@ -1,0 +1,29 @@
+/* Cloud IDS — additional overrides (base styles are in base.html) */
+
+/* Pagination dark theme */
+.page-link {
+  background-color: #2a2a2a;
+  border-color: #444;
+  color: #ccc;
+}
+.page-link:hover { background-color: #333; color: #fff; }
+.page-item.active .page-link { background-color: #dc3545; border-color: #dc3545; color: #fff; }
+.page-item.disabled .page-link { background-color: #1e1e1e; color: #555; }
+
+/* Modal dark */
+.modal-content { background: #1e1e2e; border-color: #444; color: #e0e0e0; }
+.modal-header, .modal-footer { border-color: #333; }
+
+/* Dropdown dark */
+.dropdown-menu-dark { background: #2a2a2a; border-color: #444; }
+.dropdown-item:hover { background: rgba(255,255,255,.08); }
+
+/* Table striped dark */
+.table-dark { --bs-table-bg: #1a1a2e; --bs-table-striped-bg: #1e1e35; }
+
+/* Input group addon */
+.input-group-text { background: #2a2a2a; border-color: #444; color: #ccc; }
+
+/* Button outline variants fix on dark */
+.btn-outline-secondary { color: #aaa; border-color: #555; }
+.btn-outline-secondary:hover { background: #333; color: #fff; border-color: #666; }

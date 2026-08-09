@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Settings - Cloud IDS{% endblock %}
+{% block content %}
+<h4 class="mb-4 text-white"><i class="bi bi-gear me-2"></i>Settings</h4>
+
+<div class="row g-3">
+  <!-- IP Blacklist -->
+  <div class="col-lg-6">
+    <div class="card bg-dark border-secondary">
+      <div class="card-header border-secondary"><span class="text-white fw-semibold"><i class="bi bi-slash-circle me-2"></i>IP Blacklist</span></div>
+      <div class="card-body">
+        <form method="POST">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+          <input type="hidden" name="action" value="add_blacklist"/>
+          <div class="input-group mb-3">
+            <input type="text" name="ip" placeholder="e.g. 192.168.1.100"
+                   class="form-control bg-secondary border-0 text-white" required/>
+            <button class="btn btn-danger">Add IP</button>
+          </div>
+        </form>
+        {% if blacklist %}
+        <ul class="list-group list-group-flush">
+          {% for ip in blacklist %}
+          <li class="list-group-item bg-dark border-secondary text-white d-flex justify-content-between align-items-center">
+            <span class="font-monospace">{{ ip }}</span>
+            <form method="POST" class="mb-0">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+              <input type="hidden" name="action" value="remove_blacklist"/>
+              <input type="hidden" name="ip" value="{{ ip }}"/>
+              <button class="btn btn-sm btn-outline-danger">Remove</button>
+            </form>
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <p class="text-muted small mb-0">No IPs blacklisted.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- User Management -->
+  <div class="col-lg-6">
+    <div class="card bg-dark border-secondary">
+      <div class="card-header border-secondary"><span class="text-white fw-semibold"><i class="bi bi-people me-2"></i>User Management</span></div>
+      <div class="card-body p-0">
+        <table class="table table-dark table-hover table-sm mb-0">
+          <thead class="border-secondary"><tr><th>User</th><th>Role</th><th>Status</th><th></th></tr></thead>
+          <tbody>
+            {% for u in users %}
+            <tr>
+              <td>
+                <div class="text-white">{{ u.username }}</div>
+                <div class="text-muted small">{{ u.email }}</div>
+              </td>
+              <td><span class="badge bg-secondary">{{ u.role }}</span></td>
+              <td>
+                {% if u.is_active %}<span class="badge bg-success">Active</span>
+                {% else %}<span class="badge bg-secondary">Inactive</span>{% endif %}
+              </td>
+              <td>
+                {% if u.id != current_user.id %}
+                <form method="POST">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                  <input type="hidden" name="action" value="toggle_user"/>
+                  <input type="hidden" name="user_id" value="{{ u.id }}"/>
+                  <button class="btn btn-sm btn-outline-warning">
+                    {% if u.is_active %}Disable{% else %}Enable{% endif %}
+                  </button>
+                </form>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

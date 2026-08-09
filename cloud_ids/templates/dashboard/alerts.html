@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}Alerts - Cloud IDS{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h4 class="text-white mb-0"><i class="bi bi-bell me-2"></i>Alerts</h4>
+  <a href="{{ url_for('dashboard.export_alerts') }}" class="btn btn-sm btn-outline-secondary">
+    <i class="bi bi-download me-1"></i>Export CSV
+  </a>
+</div>
+
+<!-- Severity summary -->
+<div class="row g-2 mb-3">
+  {% for sev, color in [('critical','danger'),('high','warning'),('medium','info'),('low','secondary')] %}
+  <div class="col-6 col-md-3">
+    <div class="card bg-dark border-secondary text-center py-2">
+      <div class="text-{{ color }} fw-bold fs-5">{{ counts.get(sev, 0) }}</div>
+      <div class="text-muted small text-capitalize">{{ sev }}</div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<!-- Filters -->
+<form method="GET" class="row g-2 mb-3">
+  <div class="col-auto">
+    <select name="severity" class="form-select form-select-sm bg-secondary border-0 text-white">
+      <option value="">All Severities</option>
+      {% for s in ['critical','high','medium','low'] %}
+      <option value="{{ s }}" {% if severity==s %}selected{% endif %}>{{ s|capitalize }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-auto">
+    <select name="status" class="form-select form-select-sm bg-secondary border-0 text-white">
+      <option value="">All Status</option>
+      <option value="unack" {% if status=='unack' %}selected{% endif %}>Unacknowledged</option>
+      <option value="resolved" {% if status=='resolved' %}selected{% endif %}>Resolved</option>
+    </select>
+  </div>
+  <div class="col-auto">
+    <button class="btn btn-sm btn-outline-secondary">Filter</button>
+    <a href="{{ url_for('alerts.index') }}" class="btn btn-sm btn-outline-secondary ms-1">Clear</a>
+  </div>
+</form>
+
+<!-- Alerts table -->
+<div class="card bg-dark border-secondary">
+  <div class="table-responsive">
+    <table class="table table-dark table-hover mb-0">
+      <thead class="border-secondary">
+        <tr>
+          <th>#</th><th>Severity</th><th>Type</th><th>Source IP</th>
+          <th>Message</th><th>Time</th><th>Status</th><th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for a in alerts.items %}
+        <tr>
+          <td class="text-muted">{{ a.alert_id }}</td>
+          <td><span class="{{ a.severity_badge_class }}">{{ a.severity }}</span></td>
+          <td class="small">{{ a.threat_type.replace('_',' ')|title }}</td>
+          <td class="font-monospace small">{{ a.source_ip }}</td>
+          <td class="small text-muted" style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ a.message }}</td>
+          <td class="small text-muted">{{ a.time_detected.strftime('%Y-%m-%d %H:%M') if a.time_detected else '' }}</td>
+          <td>
+            {% if a.false_positive %}<span class="badge bg-secondary">False +</span>
+            {% elif a.resolved %}<span class="badge bg-success">Resolved</span>
+            {% elif a.acknowledged %}<span class="badge bg-primary">Ack'd</span>
+            {% else %}<span class="badge bg-danger">Open</span>{% endif %}
+          </td>
+          <td>
+            <div class="btn-group btn-group-sm">
+              {% if not a.acknowledged and not a.false_positive %}
+              <form method="POST" action="{{ url_for('alerts.acknowledge', alert_id=a.alert_id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                <button class="btn btn-outline-success btn-sm" title="Acknowledge">✓</button>
+              </form>
+              {% endif %}
+              {% if not a.resolved %}
+              <form method="POST" action="{{ url_for('alerts.resolve', alert_id=a.alert_id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                <button class="btn btn-outline-primary btn-sm" title="Resolve">✔</button>
+              </form>
+              <form method="POST" action="{{ url_for('alerts.false_positive', alert_id=a.alert_id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                <button class="btn btn-outline-warning btn-sm" title="False Positive">FP</button>
+              </form>
+              {% endif %}
+              {% if current_user.is_admin() %}
+              <form method="POST" action="{{ url_for('alerts.delete', alert_id=a.alert_id) }}"
+                    onsubmit="return confirm('Delete this alert?')">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                <button class="btn btn-outline-danger btn-sm">✕</button>
+              </form>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="8" class="text-center text-muted py-4">No alerts found.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Pagination -->
+{% if alerts.pages > 1 %}
+<nav class="mt-3">
+  <ul class="pagination pagination-sm justify-content-center">
+    {% if alerts.has_prev %}
+    <li class="page-item"><a class="page-link bg-dark border-secondary text-white" href="?page={{ alerts.prev_num }}&severity={{ severity }}&status={{ status }}">‹</a></li>
+    {% endif %}
+    {% for p in alerts.iter_pages(left_edge=1, right_edge=1, left_current=2, right_current=2) %}
+      {% if p %}
+      <li class="page-item {% if p == alerts.page %}active{% endif %}">
+        <a class="page-link bg-dark border-secondary text-white" href="?page={{ p }}&severity={{ severity }}&status={{ status }}">{{ p }}</a>
+      </li>
+      {% else %}<li class="page-item disabled"><span class="page-link bg-dark border-secondary">…</span></li>{% endif %}
+    {% endfor %}
+    {% if alerts.has_next %}
+    <li class="page-item"><a class="page-link bg-dark border-secondary text-white" href="?page={{ alerts.next_num }}&severity={{ severity }}&status={{ status }}">›</a></li>
+    {% endif %}
+  </ul>
+</nav>
+{% endif %}
+{% endblock %}

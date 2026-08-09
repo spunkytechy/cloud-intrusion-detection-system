@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}403 Forbidden - Cloud IDS{% endblock %}
+{% block content %}
+<div class="text-center mt-5">
+  <i class="bi bi-shield-x text-danger" style="font-size:5rem;"></i>
+  <h1 class="text-white mt-3">403</h1>
+  <p class="text-muted">Forbidden — you do not have permission to access this resource.</p>
+  <a href="{{ url_for('dashboard.index') }}" class="btn btn-danger mt-2">Go to Dashboard</a>
+</div>
+{% endblock %}
+{% block public_content %}{{ self.content() }}{% endblock %}
