@@ -104,6 +104,9 @@ def create_app(config_class=None) -> Flask:
     from routes.api_routes import register_socketio
     register_socketio(socketio, app)
 
+    # 10. Start packet capture + analyzer (guarded by ENABLE_PACKET_CAPTURE)
+    _start_capture_pipeline(app)
+
     app.logger.info("Cloud IDS application started successfully.")
     return app
 
@@ -175,6 +178,13 @@ def _init_extensions(app: Flask) -> None:
     mail.init_app(app)
     csrf.init_app(app)
     jwt.init_app(app)
+
+    # Expose SocketIO + Mail via app.extensions so background code
+    # (alerts.generator) can resolve them via current_app without
+    # importing this module (which would be __main__ under
+    # `python app.py` and cause duplicate instances).
+    app.extensions["socketio"] = socketio
+    app.extensions["mail"] = mail
 
     # Wire limiter to the storage backend defined in config (memory:// by default)
     limiter._storage_uri = app.config.get("RATELIMIT_STORAGE_URL", "memory://")
@@ -354,6 +364,68 @@ def _seed_admin(app: Flask) -> None:
     except Exception as exc:
         db.session.rollback()
         app.logger.warning("Admin seeding skipped: %s", exc)
+
+
+# ==============================================================================
+# PACKET CAPTURE PIPELINE
+# ==============================================================================
+def _start_capture_pipeline(app: Flask) -> None:
+    """
+    Boot the packet sniffer and analyzer background threads.
+
+    This is what actually feeds the dashboard / alerts / logs pages
+    with live data. Without it, the DB stays empty and every dashboard
+    panel shows zeroes.
+
+    Guarded by:
+      - config ENABLE_PACKET_CAPTURE (set to False to run web-only)
+      - single-instance module-level flag so a re-import doesn't
+        spawn duplicate threads
+      - TESTING flag so unit tests never open raw sockets
+    """
+    from packet_capture.state import set_capture_state
+
+    if app.config.get("TESTING"):
+        app.logger.info("Packet capture skipped: TESTING mode.")
+        set_capture_state(enabled=False, running=False)
+        return
+
+    if not app.config.get("ENABLE_PACKET_CAPTURE", True):
+        app.logger.info(
+            "Packet capture skipped: ENABLE_PACKET_CAPTURE is False."
+        )
+        set_capture_state(enabled=False, running=False)
+        return
+
+    # Idempotent — a second create_app() call (uncommon but possible in
+    # test / reload scenarios) should not spawn a second sniffer.
+    if getattr(app, "_capture_started", False):
+        app.logger.info("Packet capture already started for this app.")
+        return
+
+    try:
+        from packet_capture.sniffer import get_sniffer_instance
+        from packet_capture.analyzer import PacketAnalyzer
+
+        sniffer  = get_sniffer_instance(app)
+        analyzer = PacketAnalyzer(app)
+
+        analyzer.start()   # start consumer first so the queue drains
+        sniffer.start()    # then start producer
+
+        set_capture_state(enabled=True)
+        app._capture_started = True
+        app.logger.info(
+            "Packet capture pipeline started (interface=%s).",
+            app.config.get("CAPTURE_INTERFACE") or "auto",
+        )
+    except Exception as exc:
+        app.logger.error(
+            "Failed to start packet capture pipeline: %s", exc, exc_info=True,
+        )
+        set_capture_state(
+            enabled=True, running=False, last_error=str(exc),
+        )
 
 
 # ==============================================================================

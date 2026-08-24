@@ -4,6 +4,7 @@ from flask_socketio import Namespace, emit, join_room
 from database.db import check_db_connection, get_db_stats
 from models.alert import Alert
 from models.traffic_log import TrafficLog
+from packet_capture.state import get_capture_state
 import psutil, platform
 from datetime import datetime, timezone
 
@@ -23,13 +24,25 @@ def health_check():
                   "disk_percent": disk.percent, "platform": platform.system()}
     except Exception:
         system = {}
+    capture = get_capture_state()
+    ok = (db_status["status"] == "ok")
     return jsonify({
-        "status":    "ok" if db_status["status"] == "ok" else "degraded",
+        "status":    "ok" if ok else "degraded",
         "app":       current_app.config.get("APP_NAME", "Cloud IDS"),
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "database":  db_status,
         "system":    system,
-    }), 200 if db_status["status"] == "ok" else 503
+        "capture":   capture,
+    }), 200 if ok else 503
+
+
+@api_bp.route("/capture", methods=["GET"])
+def capture_status():
+    """
+    Return the packet-capture pipeline state.
+    Useful for the dashboard banner and external monitoring.
+    """
+    return jsonify(get_capture_state()), 200
 
 
 @api_bp.route("/stats", methods=["GET"])
@@ -71,7 +84,7 @@ class IDSNamespace(Namespace):
 
 def register_socketio(socketio, app):
     """
-    Register the /ids namespace and launch the background stats emitter.
+    Register the /ids namespace and launch the background emitter.
 
     Args:
         socketio : the shared SocketIO instance
@@ -80,30 +93,52 @@ def register_socketio(socketio, app):
     """
     socketio.on_namespace(IDSNamespace("/ids"))
 
-    def background_stats():
-        """Emit packet_count every second and system_stats every 5 seconds."""
+    def background_emitter():
+        """
+        Emit dashboard telemetry on a fixed cadence:
+
+        * every 1s  → packet_count  (delta since last tick + running total)
+                     Uses packets_seen from state — no DB query.
+        * every 5s  → system_stats  (cpu / memory / disk)
+        * every 10s → total_packets (authoritative COUNT(*) from DB)
+                     capture_status (running / last_error)
+        """
+        last_seen  = 0
         last_total = 0
         tick       = 0
 
         while True:
             socketio.sleep(1)
+            tick += 1
             try:
-                with app.app_context():
-                    total     = TrafficLog.query.count()
-                    new_count = max(0, total - last_total)
-                    last_total = total
-                    tick      += 1
+                state = get_capture_state()
+                seen  = int(state.get("packets_seen", 0))
+                delta = max(0, seen - last_seen)
+                last_seen = seen
 
-                    socketio.emit("packet_count",
-                                  {"count": new_count, "total": total},
-                                  namespace="/ids")
+                # Per-second live delta drives the live-traffic chart
+                socketio.emit("packet_count",
+                              {"count": delta, "total": last_total or seen},
+                              namespace="/ids")
 
-                    if tick % 5 == 0:
-                        socketio.emit("system_stats", {
-                            "cpu":    psutil.cpu_percent(),
-                            "memory": psutil.virtual_memory().percent,
-                        }, namespace="/ids")
+                # Every 5s: system stats
+                if tick % 5 == 0:
+                    socketio.emit("system_stats", {
+                        "cpu":    psutil.cpu_percent(),
+                        "memory": psutil.virtual_memory().percent,
+                    }, namespace="/ids")
+
+                # Every 10s: authoritative DB total + capture health
+                if tick % 10 == 0:
+                    try:
+                        with app.app_context():
+                            last_total = TrafficLog.query.count()
+                    except Exception:
+                        pass
+                    socketio.emit("capture_status", state, namespace="/ids")
+
             except Exception:
-                pass  # never let the background thread die
+                # Never let the background thread die on transient errors
+                pass
 
-    socketio.start_background_task(background_stats)
+    socketio.start_background_task(background_emitter)

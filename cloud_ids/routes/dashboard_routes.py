@@ -4,9 +4,11 @@ from flask import (Blueprint, render_template, redirect, url_for,
 from flask_login import login_required, current_user
 from database.db import db
 from models.alert import Alert
+from models.detection_rule import DetectionRule
 from models.traffic_log import TrafficLog
 from models.user import User
 from models.audit_log import AuditLog
+from packet_capture.state import get_capture_state
 import csv, io
 from datetime import datetime, timezone, timedelta
 
@@ -21,20 +23,24 @@ def index():
     total_alerts    = Alert.query.count()
     active_threats  = Alert.query.filter_by(
         acknowledged=False, resolved=False, false_positive=False).count()
+    total_rules     = DetectionRule.query.filter_by(enabled=True).count()
     unack_alerts    = Alert.get_unacknowledged(limit=5)
     recent_logs     = TrafficLog.get_recent(limit=10)
     severity_counts = Alert.count_by_severity()
     threat_counts   = Alert.count_by_threat_type()
     top_ips         = TrafficLog.get_top_source_ips(limit=5)
+    capture_state   = get_capture_state()
     return render_template("dashboard/index.html",
         total_packets=total_packets,
         total_alerts=total_alerts,
         active_threats=active_threats,
+        total_rules=total_rules,
         unack_alerts=unack_alerts,
         recent_logs=recent_logs,
         severity_counts=severity_counts,
         threat_counts=threat_counts,
         top_ips=top_ips,
+        capture_state=capture_state,
     )
 
 

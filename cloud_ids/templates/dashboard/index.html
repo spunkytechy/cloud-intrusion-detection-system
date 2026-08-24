@@ -3,6 +3,30 @@
 {% block content %}
 <h4 class="mb-4 text-white"><i class="bi bi-speedometer2 me-2"></i>Dashboard</h4>
 
+<!-- Capture-state banner: only shown when the pipeline is not healthy -->
+{% if capture_state and not capture_state.running %}
+<div class="alert {% if capture_state.enabled %}alert-danger{% else %}alert-secondary{% endif %} d-flex align-items-start gap-2 mb-3" role="alert">
+  <i class="bi {% if capture_state.enabled %}bi-exclamation-octagon-fill{% else %}bi-power{% endif %} fs-5 mt-1"></i>
+  <div class="small flex-grow-1">
+    {% if not capture_state.enabled %}
+      <strong>Packet capture is disabled.</strong>
+      Set <code>ENABLE_PACKET_CAPTURE=True</code> in <code>.env</code> and restart to start capturing traffic.
+    {% elif capture_state.last_error %}
+      <strong>Packet capture is not running.</strong>
+      <div class="text-muted mt-1">{{ capture_state.last_error }}</div>
+      <div class="text-muted mt-1">
+        On Windows: install <a href="https://npcap.com" class="text-warning" target="_blank" rel="noopener">Npcap</a>,
+        set <code>CAPTURE_INTERFACE</code> in <code>.env</code>, and run as Administrator.
+      </div>
+    {% else %}
+      <strong>Packet capture is starting…</strong>
+      Waiting for the first packets from
+      <code>{{ capture_state.interface or 'auto' }}</code>.
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
 <!-- Stat Cards -->
 <div class="row g-3 mb-4">
   <div class="col-sm-6 col-lg-3">
@@ -44,7 +68,7 @@
         <i class="bi bi-shield-check text-success fs-2"></i>
         <div>
           <div class="text-muted small">Detection Rules</div>
-          <div class="fs-4 fw-bold">{{ severity_counts|length }}</div>
+          <div class="fs-4 fw-bold">{{ total_rules }}</div>
         </div>
       </div>
     </div>
@@ -57,7 +81,13 @@
     <div class="card bg-dark border-secondary h-100">
       <div class="card-header border-secondary d-flex justify-content-between align-items-center">
         <span class="text-white fw-semibold"><i class="bi bi-graph-up me-2"></i>Live Traffic</span>
-        <span class="badge bg-success" id="capture-badge">Live</span>
+        {% if capture_state and capture_state.running %}
+          <span class="badge bg-success" id="capture-badge">Live</span>
+        {% elif capture_state and not capture_state.enabled %}
+          <span class="badge bg-secondary" id="capture-badge">Off</span>
+        {% else %}
+          <span class="badge bg-danger" id="capture-badge">Down</span>
+        {% endif %}
       </div>
       <div class="card-body"><canvas id="trafficChart" height="120"></canvas></div>
     </div>
@@ -196,6 +226,15 @@ if (typeof io !== 'undefined') {
     }
     const nav = document.getElementById("nav-alert-count");
     if (nav) nav.textContent = parseInt(nav.textContent||0)+1;
+  });
+  // Live capture-state indicator
+  socket.on("capture_status", s => {
+    const badge = document.getElementById("capture-badge");
+    if (!badge) return;
+    badge.classList.remove("bg-success", "bg-secondary", "bg-danger");
+    if (s.running) { badge.classList.add("bg-success"); badge.textContent = "Live"; }
+    else if (!s.enabled) { badge.classList.add("bg-secondary"); badge.textContent = "Off"; }
+    else { badge.classList.add("bg-danger"); badge.textContent = "Down"; }
   });
 }
 </script>

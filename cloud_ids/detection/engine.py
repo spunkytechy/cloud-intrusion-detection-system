@@ -4,29 +4,40 @@ detection/engine.py - DetectionEngine
 Coordinates all threat detectors. Receives a parsed packet dict from
 the PacketAnalyzer and runs it through every enabled rule.
 
-Architecture:
+Architecture
+------------
   DetectionEngine
-    ├── RuleManager          loads active rules from DB
-    ├── ThreatClassifier     maps rule_type → severity
-    └── Individual detectors (one per threat type)
+    ├── RuleManager          loads active rules from DB (cached 30s)
+    ├── ThreatClassifier     maps rule_type → severity + label + message
+    └── Individual detectors one per threat type
+
+Perf note
+---------
+`analyze()` is called once per captured packet, so anything expensive
+must be cached or amortised:
+
+* RuleManager caches the enabled-rules list for RULE_CACHE_TTL seconds
+  (default 30) — rules almost never change at runtime.
+* We open a single ``with app.app_context()`` here, at the top of
+  analyze(), so no detector needs to open its own context per packet.
 """
 
 import logging
+import threading
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
+RULE_CACHE_TTL = 30.0   # seconds
+
 
 class DetectionEngine:
-    """
-    Main orchestrator. Runs every enabled detection rule against
-    each incoming packet dict.
-    """
+    """Main orchestrator. Runs every enabled detector against each packet."""
 
     def __init__(self, app):
         self.app = app
-        self.rule_manager   = RuleManager(app)
-        self.classifier     = ThreatClassifier()
+        self.rule_manager = RuleManager(app)
+        self.classifier   = ThreatClassifier()
 
         # Map rule_type → detector instance
         self._detectors = {
@@ -39,37 +50,62 @@ class DetectionEngine:
 
     def analyze(self, packet: dict) -> None:
         """
-        Run all enabled detectors against a parsed packet.
+        Run every enabled detector against a parsed packet.
+
+        A single app context is opened here so detectors and
+        AlertGenerator can hit the DB / config without each
+        opening their own context per packet.
 
         Args:
             packet: dict from PacketAnalyzer._parse_packet()
         """
-        rules = self.rule_manager.get_enabled()
-        for rule in rules:
-            detector = self._detectors.get(rule["rule_type"])
-            if detector:
-                try:
-                    detector.inspect(packet, rule)
-                except Exception as exc:
-                    logger.error("Detector %s error: %s", rule["rule_type"], exc)
+        try:
+            with self.app.app_context():
+                rules = self.rule_manager.get_enabled()
+                for rule in rules:
+                    detector = self._detectors.get(rule["rule_type"])
+                    if not detector:
+                        continue
+                    try:
+                        detector.inspect(packet, rule)
+                    except Exception as exc:
+                        logger.error(
+                            "Detector %s error: %s", rule["rule_type"], exc,
+                        )
+        except Exception as exc:
+            logger.error("DetectionEngine.analyze error: %s", exc)
 
 
 # ==============================================================================
-# RULE MANAGER
+# RULE MANAGER (cached)
 # ==============================================================================
 class RuleManager:
-    """Loads active detection rules from the database."""
+    """
+    Loads active detection rules from the database, cached for
+    RULE_CACHE_TTL seconds to avoid a DB round-trip per packet.
+
+    Callers must invoke get_enabled() from inside an application context.
+    invalidate() can be called to force a reload (e.g. from an admin
+    action that toggles a rule).
+    """
 
     def __init__(self, app):
         self.app = app
+        self._cache: list = []
+        self._cache_expires_at: float = 0.0
+        self._lock = threading.Lock()
 
     def get_enabled(self) -> list:
-        """Return list of enabled rule dicts from DB."""
-        try:
-            with self.app.app_context():
+        """Return list of enabled rule dicts (cached)."""
+        now = datetime.now(timezone.utc).timestamp()
+        with self._lock:
+            if self._cache and now < self._cache_expires_at:
+                return self._cache
+
+            try:
                 from models.detection_rule import DetectionRule
                 rules = DetectionRule.query.filter_by(enabled=True).all()
-                return [
+                self._cache = [
                     {
                         "id":        r.id,
                         "rule_type": r.rule_type,
@@ -79,16 +115,24 @@ class RuleManager:
                     }
                     for r in rules
                 ]
-        except Exception as exc:
-            logger.error("RuleManager error: %s", exc)
-            return []
+                self._cache_expires_at = now + RULE_CACHE_TTL
+                return self._cache
+            except Exception as exc:
+                logger.error("RuleManager reload failed: %s", exc)
+                # Serve stale cache if we have one, else empty
+                return self._cache or []
+
+    def invalidate(self) -> None:
+        """Force the next get_enabled() call to reload from DB."""
+        with self._lock:
+            self._cache_expires_at = 0.0
 
 
 # ==============================================================================
 # THREAT CLASSIFIER
 # ==============================================================================
 class ThreatClassifier:
-    """Maps rule_type to a human-readable label and default severity."""
+    """Maps rule_type to a human-readable label and default message."""
 
     LABELS = {
         "port_scan":     "Port Scan Detected",
@@ -111,7 +155,9 @@ class ThreatClassifier:
         if rule_type == "suspicious_ip":
             return f"Traffic from blacklisted IP: {source_ip}."
         if rule_type == "traffic_spike":
-            return f"Traffic spike detected: {count}x above baseline from {source_ip}."
+            return (
+                f"Traffic spike detected: {count}× above baseline from {source_ip}."
+            )
         return f"Threat detected from {source_ip}: {count} events."
 
 
@@ -120,111 +166,93 @@ class ThreatClassifier:
 # ==============================================================================
 class BaseDetector:
     """
-    Common logic shared by all detectors.
-    Uses an in-memory sliding window (dict of ip → list[timestamp]) to
-    count events per source IP within a rolling time window.
+    Common sliding-window bookkeeping shared by most detectors.
+    Uses an in-memory dict of ip → list[UTC datetime].
+
+    Subclasses implement inspect(packet, rule) and call _fire_alert()
+    when their threshold is met.
     """
 
     def __init__(self, app):
         self.app = app
-        self._windows: dict = {}   # ip → list of UTC timestamps
+        self._windows: dict = {}
         self._classifier = ThreatClassifier()
 
-    def inspect(self, packet: dict, rule: dict) -> None:
-        """Override in subclass."""
+    def inspect(self, packet: dict, rule: dict) -> None:  # pragma: no cover
         raise NotImplementedError
 
     def _record(self, ip: str, window_secs: int, timestamp: datetime) -> int:
-        """
-        Record an event for ip, evict events older than window_secs,
-        and return the current count within the window.
-        """
+        """Record an event, evict old ones, return current count in window."""
         now = timestamp or datetime.now(timezone.utc)
-        if ip not in self._windows:
-            self._windows[ip] = []
-
-        # Add current event
-        self._windows[ip].append(now)
-
-        # Evict events outside the rolling window
+        bucket = self._windows.setdefault(ip, [])
+        bucket.append(now)
         cutoff = now.timestamp() - window_secs
-        self._windows[ip] = [
-            t for t in self._windows[ip]
-            if t.timestamp() >= cutoff
-        ]
+        self._windows[ip] = [t for t in bucket if t.timestamp() >= cutoff]
         return len(self._windows[ip])
 
     def _fire_alert(self, rule: dict, source_ip: str, count: int) -> None:
-        """Create an Alert record and broadcast via SocketIO."""
+        """
+        Create an Alert record and broadcast via SocketIO.
+
+        The caller (DetectionEngine.analyze) already holds an
+        application context, so AlertGenerator can commit directly.
+        """
         rule_type = rule["rule_type"]
         severity  = rule["severity"]
         message   = self._classifier.message(
-            rule_type, source_ip, count, rule["window"]
+            rule_type, source_ip, count, rule["window"],
         )
         try:
-            with self.app.app_context():
-                from alerts.generator import AlertGenerator
-                AlertGenerator.create(
-                    threat_type=rule_type,
-                    source_ip=source_ip,
-                    severity=severity,
-                    message=message,
-                )
+            from alerts.generator import AlertGenerator
+            AlertGenerator.create(
+                threat_type = rule_type,
+                source_ip   = source_ip,
+                severity    = severity,
+                message     = message,
+            )
         except Exception as exc:
-            logger.error("Alert fire error: %s", exc)
+            logger.error("Alert fire error: %s", exc, exc_info=True)
 
 
 # ==============================================================================
 # PORT SCAN DETECTOR
-# Threshold: N unique destination ports from one IP in window seconds
 # ==============================================================================
 class PortScanDetector(BaseDetector):
     """Detects horizontal port scans from a single source IP."""
 
     def __init__(self, app):
         super().__init__(app)
-        self._port_windows: dict = {}   # ip → set of ports (for uniqueness)
-        self._time_windows: dict  = {}   # ip → list of timestamps
+        self._port_windows: dict = {}   # ip → {port: last_seen_ts}
 
     def inspect(self, packet: dict, rule: dict) -> None:
-        ip      = packet.get("source_ip")
-        port    = packet.get("port")
-        ts      = packet.get("timestamp", datetime.now(timezone.utc))
-        window  = rule["window"]
-        thresh  = rule["threshold"]
+        ip     = packet.get("source_ip")
+        port   = packet.get("port")
+        ts     = packet.get("timestamp", datetime.now(timezone.utc))
+        window = rule["window"]
+        thresh = rule["threshold"]
 
         if not ip or port is None:
             return
 
-        now = ts
-        if ip not in self._time_windows:
-            self._time_windows[ip]  = []
-            self._port_windows[ip]  = {}
+        ports = self._port_windows.setdefault(ip, {})
+        ports[port] = ts
 
-        # Store port with its timestamp
-        self._port_windows[ip][port] = now
-        self._time_windows[ip].append(now)
-
-        # Evict old entries
-        cutoff = now.timestamp() - window
-        self._port_windows[ip] = {
-            p: t for p, t in self._port_windows[ip].items()
-            if t.timestamp() >= cutoff
-        }
+        cutoff = ts.timestamp() - window
+        # Evict old ports
+        self._port_windows[ip] = {p: t for p, t in ports.items()
+                                  if t.timestamp() >= cutoff}
 
         unique_ports = len(self._port_windows[ip])
         if unique_ports >= thresh:
             self._fire_alert(rule, ip, unique_ports)
-            # Reset to prevent alert storm
-            self._port_windows[ip] = {}
+            self._port_windows[ip] = {}   # reset to prevent alert storm
 
 
 # ==============================================================================
 # BRUTE FORCE DETECTOR
-# Threshold: N packets to common auth ports from one IP in window seconds
 # ==============================================================================
 class BruteForceDetector(BaseDetector):
-    """Detects repeated connection attempts to auth-related ports."""
+    """Detects repeated connection attempts to common auth ports."""
 
     AUTH_PORTS = {21, 22, 23, 25, 80, 110, 143, 443, 445, 3306, 5432, 8080}
 
@@ -241,12 +269,11 @@ class BruteForceDetector(BaseDetector):
         count = self._record(ip, window, ts)
         if count >= thresh:
             self._fire_alert(rule, ip, count)
-            self._windows[ip] = []   # reset after firing
+            self._windows[ip] = []
 
 
 # ==============================================================================
 # DDOS DETECTOR
-# Threshold: N packets from one IP in 1 second
 # ==============================================================================
 class DDoSDetector(BaseDetector):
     """Detects volumetric flood from a single source IP."""
@@ -268,74 +295,60 @@ class DDoSDetector(BaseDetector):
 
 # ==============================================================================
 # SUSPICIOUS IP DETECTOR
-# Fires on any traffic from the IP blacklist
 # ==============================================================================
 class SuspiciousIPDetector(BaseDetector):
     """Flags any packet from a blacklisted IP address."""
 
     def __init__(self, app):
         super().__init__(app)
-        self._alerted: set = set()   # avoid duplicate alerts per IP
+        self._alerted: set = set()   # IPs already alerted on
 
     def inspect(self, packet: dict, rule: dict) -> None:
         ip = packet.get("source_ip")
         if not ip or ip in self._alerted:
             return
 
-        try:
-            with self.app.app_context():
-                blacklist = self.app.config.get("IP_BLACKLIST", [])
-                if ip in blacklist:
-                    self._fire_alert(rule, ip, 1)
-                    self._alerted.add(ip)
-        except Exception as exc:
-            logger.error("SuspiciousIPDetector error: %s", exc)
+        # self.app.config points to the same dict Flask uses, so it
+        # reflects live edits from /dashboard/settings — no extra
+        # app_context needed since analyze() already opened one.
+        blacklist = self.app.config.get("IP_BLACKLIST", [])
+        if ip in blacklist:
+            self._fire_alert(rule, ip, 1)
+            self._alerted.add(ip)
 
 
 # ==============================================================================
 # TRAFFIC SPIKE DETECTOR
-# Fires when current rate exceeds baseline × multiplier
 # ==============================================================================
 class TrafficSpikeDetector(BaseDetector):
-    """
-    Detects sudden traffic spikes by comparing current-window rate
-    against a rolling baseline average.
-    """
+    """Detects sudden traffic spikes vs a rolling baseline."""
 
     def __init__(self, app):
         super().__init__(app)
-        self._global_window: list = []   # all timestamps for baseline
-        self._last_baseline: float = 0.0
-        self._baseline_samples: list = []
+        self._global_window: list = []
 
     def inspect(self, packet: dict, rule: dict) -> None:
-        ip        = packet.get("source_ip")
-        ts        = packet.get("timestamp", datetime.now(timezone.utc))
-        window    = rule["window"]     # rolling window seconds (60)
-        multiplier = rule["threshold"] # spike multiplier (3)
+        ip         = packet.get("source_ip")
+        ts         = packet.get("timestamp", datetime.now(timezone.utc))
+        window     = rule["window"]     # rolling window seconds (60)
+        multiplier = rule["threshold"]  # spike multiplier (3)
 
-        now = ts
-        self._global_window.append(now)
+        self._global_window.append(ts)
 
-        # Keep only last window*2 seconds
-        cutoff = now.timestamp() - (window * 2)
-        self._global_window = [
-            t for t in self._global_window if t.timestamp() >= cutoff
-        ]
+        # Keep the last 2× window seconds
+        cutoff = ts.timestamp() - (window * 2)
+        self._global_window = [t for t in self._global_window
+                               if t.timestamp() >= cutoff]
 
-        # Current rate = packets in last `window` seconds
-        recent_cutoff = now.timestamp() - window
-        current_count = sum(
-            1 for t in self._global_window
-            if t.timestamp() >= recent_cutoff
-        )
-
-        # Baseline = packets in the window before that
+        recent_cutoff = ts.timestamp() - window
+        current_count = sum(1 for t in self._global_window
+                            if t.timestamp() >= recent_cutoff)
         baseline_count = len(self._global_window) - current_count
+
+        # Require a real baseline before spiking
         if baseline_count < 10:
-            return  # not enough history yet
+            return
 
         if current_count >= baseline_count * multiplier:
             self._fire_alert(rule, ip or "multiple", current_count)
-            # Reset to prevent alert storm
             self._global_window = []
