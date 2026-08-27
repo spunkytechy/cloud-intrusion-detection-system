@@ -104,6 +104,9 @@ def create_app(config_class=None) -> Flask:
     from routes.api_routes import register_socketio
     register_socketio(socketio, app)
 
+    # 10. Start packet capture + detection engine (background threads)
+    _start_capture(app)
+
     app.logger.info("Cloud IDS application started successfully.")
     return app
 
@@ -115,6 +118,8 @@ def create_app(config_class=None) -> Flask:
 def _configure_logging(app: Flask) -> None:
     """
     Set up rotating file handler + stream handler for the application logger.
+    Also wires ALL module-level loggers (logging.getLogger(__name__)) to the
+    same handlers so detection/alert/sniffer output appears in the log file.
     """
     log_level = getattr(
         logging, app.config.get("LOG_LEVEL", "DEBUG").upper(), logging.DEBUG
@@ -123,31 +128,34 @@ def _configure_logging(app: Flask) -> None:
     max_bytes = app.config.get("LOG_MAX_BYTES", 10 * 1024 * 1024)
     backup    = app.config.get("LOG_BACKUP_COUNT", 10)
 
-    # Ensure logs/ directory exists
     os.makedirs(os.path.dirname(log_file), exist_ok=True)
 
     formatter = logging.Formatter(
-        "[%(asctime)s] %(levelname)s in %(module)s (%(funcName)s:%(lineno)d): %(message)s",
+        "[%(asctime)s] %(levelname)s %(name)s (%(funcName)s:%(lineno)d): %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    # Rotating file handler
     file_handler = RotatingFileHandler(
         log_file, maxBytes=max_bytes, backupCount=backup, encoding="utf-8"
     )
     file_handler.setLevel(log_level)
     file_handler.setFormatter(formatter)
 
-    # Stream (console) handler
     stream_handler = logging.StreamHandler()
     stream_handler.setLevel(log_level)
     stream_handler.setFormatter(formatter)
 
-    app.logger.handlers.clear()
-    app.logger.addHandler(file_handler)
-    app.logger.addHandler(stream_handler)
+    # ── Wire the ROOT logger so every module's getLogger(__name__) is captured
+    root_logger = logging.getLogger()
+    root_logger.setLevel(log_level)
+    # Remove any existing handlers to avoid duplicate output
+    root_logger.handlers.clear()
+    root_logger.addHandler(file_handler)
+    root_logger.addHandler(stream_handler)
+
+    # Flask's own logger delegates to root — just set its level
     app.logger.setLevel(log_level)
-    app.logger.propagate = False
+    app.logger.propagate = True   # let it flow to root
 
     app.logger.info(
         "Logging initialised. Level: %s | File: %s",
@@ -354,6 +362,49 @@ def _seed_admin(app: Flask) -> None:
     except Exception as exc:
         db.session.rollback()
         app.logger.warning("Admin seeding skipped: %s", exc)
+
+
+def _start_capture(app: Flask) -> None:
+    """
+    Start the PacketSniffer and PacketAnalyzer background threads.
+
+    - PacketSniffer captures raw packets from the network interface
+      and pushes them into the shared packet_queue.
+    - PacketAnalyzer drains that queue, parses each packet, saves a
+      TrafficLog row, and runs it through the DetectionEngine.
+
+    Both threads are daemon threads so they die automatically when
+    the main process exits. Sniffer failures (e.g. missing Npcap on
+    Windows, or insufficient permissions) are caught and logged — they
+    will NOT crash the web application.
+    """
+    import threading
+
+    # ── Start Analyzer first (must be ready before sniffer produces packets)
+    try:
+        from packet_capture.analyzer import PacketAnalyzer
+        analyzer = PacketAnalyzer(app)
+        analyzer.start()
+        app.logger.info("PacketAnalyzer thread started.")
+    except Exception as exc:
+        app.logger.error("Failed to start PacketAnalyzer: %s", exc)
+        return  # no point starting sniffer if analyzer won't run
+
+    # ── Start Sniffer
+    try:
+        from packet_capture.sniffer import get_sniffer_instance
+        sniffer = get_sniffer_instance(app)
+        sniffer.start()
+        app.logger.info(
+            "PacketSniffer thread started on interface: %s",
+            sniffer.interface or "default",
+        )
+    except Exception as exc:
+        # Sniffer failure is non-fatal — dashboard still works without live capture
+        app.logger.warning(
+            "PacketSniffer could not start (Npcap installed? Running as admin?): %s",
+            exc,
+        )
 
 
 # ==============================================================================

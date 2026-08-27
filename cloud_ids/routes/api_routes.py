@@ -72,38 +72,43 @@ class IDSNamespace(Namespace):
 def register_socketio(socketio, app):
     """
     Register the /ids namespace and launch the background stats emitter.
-
-    Args:
-        socketio : the shared SocketIO instance
-        app      : the Flask app instance (captured in closure so the
-                   background thread has an app context)
     """
     socketio.on_namespace(IDSNamespace("/ids"))
 
     def background_stats():
         """Emit packet_count every second and system_stats every 5 seconds."""
-        last_total = 0
-        tick       = 0
+        # nonlocal-style state stored in a mutable container so the inner
+        # reassignment is visible across iterations without UnboundLocalError.
+        state = {"last_total": 0, "tick": 0}
 
         while True:
             socketio.sleep(1)
             try:
                 with app.app_context():
-                    total     = TrafficLog.query.count()
-                    new_count = max(0, total - last_total)
-                    last_total = total
-                    tick      += 1
+                    total               = TrafficLog.query.count()
+                    new_count           = max(0, total - state["last_total"])
+                    state["last_total"] = total
+                    state["tick"]      += 1
 
-                    socketio.emit("packet_count",
-                                  {"count": new_count, "total": total},
-                                  namespace="/ids")
+                    socketio.emit(
+                        "packet_count",
+                        {"count": new_count, "total": total},
+                        namespace="/ids",
+                    )
 
-                    if tick % 5 == 0:
-                        socketio.emit("system_stats", {
-                            "cpu":    psutil.cpu_percent(),
-                            "memory": psutil.virtual_memory().percent,
-                        }, namespace="/ids")
-            except Exception:
-                pass  # never let the background thread die
+                    if state["tick"] % 5 == 0:
+                        socketio.emit(
+                            "system_stats",
+                            {
+                                "cpu":    psutil.cpu_percent(),
+                                "memory": psutil.virtual_memory().percent,
+                            },
+                            namespace="/ids",
+                        )
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "background_stats error: %s", exc
+                )
 
     socketio.start_background_task(background_stats)
