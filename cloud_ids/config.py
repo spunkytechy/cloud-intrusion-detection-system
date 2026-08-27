@@ -108,6 +108,8 @@ class BaseConfig:
     MAIL_SERVER: str = os.environ.get("MAIL_SERVER", "smtp.gmail.com")
     MAIL_PORT: int = int(os.environ.get("MAIL_PORT", 587))
     MAIL_USE_TLS: bool = os.environ.get("MAIL_USE_TLS", "True").lower() == "true"
+    # Flask-Mail 0.10 calls int(app.config['MAIL_DEBUG']) — must not be None
+    MAIL_DEBUG: int = int(os.environ.get("MAIL_DEBUG", 0))
     MAIL_USERNAME: str = os.environ.get("MAIL_USERNAME", "")
     MAIL_PASSWORD: str = os.environ.get("MAIL_PASSWORD", "")
     MAIL_DEFAULT_SENDER: str = os.environ.get("MAIL_DEFAULT_SENDER", "")
@@ -144,9 +146,31 @@ class BaseConfig:
     # ------------------------------------------------------------------
     # Packet Capture Settings
     # ------------------------------------------------------------------
+    # Master switch — set to False to boot the web UI without starting
+    # the Scapy sniffer (useful on machines without Npcap / admin rights).
+    ENABLE_PACKET_CAPTURE: bool = (
+        os.environ.get("ENABLE_PACKET_CAPTURE", "True").lower() == "true"
+    )
     CAPTURE_INTERFACE: str = os.environ.get("CAPTURE_INTERFACE", "Ethernet")
     CAPTURE_FILTER: str = os.environ.get("CAPTURE_FILTER", "ip")
     PACKET_BUFFER_SIZE: int = int(os.environ.get("PACKET_BUFFER_SIZE", 10000))
+
+    # PacketAnalyzer batching — how many rows to buffer before flushing
+    # to the DB, and the max seconds a row can sit in the buffer.
+    ANALYZER_BATCH_SIZE: int = int(os.environ.get("ANALYZER_BATCH_SIZE", 50))
+    ANALYZER_FLUSH_INTERVAL: float = float(
+        os.environ.get("ANALYZER_FLUSH_INTERVAL", 2.0)
+    )
+
+    # Suspicious-IP registry — how long a detected IP stays flagged so
+    # subsequent packets from it are stored as 'suspicious', and how
+    # far back the AlertGenerator back-writes existing traffic rows.
+    SUSPICIOUS_IP_TTL_SECONDS: int = int(
+        os.environ.get("SUSPICIOUS_IP_TTL_SECONDS", 300)
+    )
+    SUSPICIOUS_BACKFILL_WINDOW_SECONDS: int = int(
+        os.environ.get("SUSPICIOUS_BACKFILL_WINDOW_SECONDS", 300)
+    )
 
     # ------------------------------------------------------------------
     # Detection Engine Thresholds

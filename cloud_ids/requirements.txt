@@ -17,7 +17,7 @@ WTForms==3.1.2
 # --- Database ---
 Flask-SQLAlchemy==3.1.1
 SQLAlchemy==2.0.31
-psycopg2-binary==2.9.9
+psycopg2-binary==2.9.10
 alembic==1.13.2
 
 # --- Security & Auth ---
@@ -30,8 +30,8 @@ cryptography==42.0.8
 scapy==2.5.0
 
 # --- Async / WebSocket ---
-eventlet==0.36.1
-gevent==24.2.1
+eventlet==0.37.0
+gevent==24.11.1
 gevent-websocket==0.10.1
 simple-websocket==1.0.0
 
