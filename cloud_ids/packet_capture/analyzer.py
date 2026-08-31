@@ -82,7 +82,8 @@ class PacketAnalyzer:
                     continue
 
                 try:
-                    engine.analyze(parsed)
+                    with self.app.app_context():
+                        engine.analyze(parsed)
                 except Exception as exc:
                     logger.error("DetectionEngine.analyze failed: %s", exc)
 

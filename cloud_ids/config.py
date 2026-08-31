@@ -56,7 +56,7 @@ class BaseConfig:
     # ------------------------------------------------------------------
     SQLALCHEMY_DATABASE_URI: str = os.environ.get(
         "DATABASE_URL",
-        "postgresql://postgres:yourpassword@localhost:5432/cloud_ids_db",
+        "postgresql+psycopg2://postgres:CHANGE_ME@localhost:5432/cloud_ids_db",
     )
     # Disable modification tracking (saves memory; Flask-SQLAlchemy owns this)
     SQLALCHEMY_TRACK_MODIFICATIONS: bool = False

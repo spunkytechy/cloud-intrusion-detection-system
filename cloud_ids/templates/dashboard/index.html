@@ -5,7 +5,8 @@
 
 <!-- Capture-state banner: only shown when the pipeline is not healthy -->
 {% if capture_state and not capture_state.running %}
-<div class="alert {% if capture_state.enabled %}alert-danger{% else %}alert-secondary{% endif %} d-flex align-items-start gap-2 mb-3" role="alert">
+<div id="capture-warning"
+     class="alert {% if capture_state.enabled %}alert-danger{% else %}alert-secondary{% endif %} d-flex align-items-start gap-2 mb-3" role="alert">
   <i class="bi {% if capture_state.enabled %}bi-exclamation-octagon-fill{% else %}bi-power{% endif %} fs-5 mt-1"></i>
   <div class="small flex-grow-1">
     {% if not capture_state.enabled %}
@@ -24,6 +25,7 @@
       <code>{{ capture_state.interface or 'auto' }}</code>.
     {% endif %}
   </div>
+  <button type="button" class="btn-close btn-close-white ms-2" data-bs-dismiss="alert" aria-label="Close warning"></button>
 </div>
 {% endif %}
 
@@ -162,6 +164,25 @@
 
 {% block scripts %}
 <script>
+(function () {
+  const warningEl = document.getElementById('capture-warning');
+  if (!warningEl) return;
+
+  const key = 'cloudids_capture_warning_dismissed';
+  const isDismissed = localStorage.getItem(key) === 'true';
+  if (isDismissed) {
+    warningEl.style.display = 'none';
+    return;
+  }
+
+  const closeBtn = warningEl.querySelector('[data-bs-dismiss="alert"]');
+  if (closeBtn) {
+    closeBtn.addEventListener('click', () => {
+      localStorage.setItem(key, 'true');
+    });
+  }
+})();
+
 if (typeof Chart !== 'undefined') {
   // Traffic line chart (updated via SocketIO)
   const trafficCanvas = document.getElementById("trafficChart");

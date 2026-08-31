@@ -163,7 +163,29 @@ docker compose down
    # Update DATABASE_URL with RDS endpoint
    ```
 
-5. **Start Production Stack**:
+   The application uses `psycopg2-binary` through SQLAlchemy. URL-encode reserved
+   characters in the password (`#` becomes `%23`) and use the SQLAlchemy URL
+   format `postgresql+psycopg2://user:password@host:5432/database`.
+
+5. **Verify the RDS connection**:
+   ```bash
+   python check_db_connection.py
+   ```
+
+6. **Apply migrations**:
+   ```bash
+   flask db upgrade
+   ```
+
+   This repository currently has no Alembic revisions, so application startup
+   uses `db.create_all()` to initialize the model schema. Generate and review a
+   baseline revision before relying on Alembic for future schema changes:
+   ```bash
+   flask db migrate -m "initial schema"
+   flask db upgrade
+   ```
+
+7. **Start Production Stack**:
    ```bash
    docker compose up --build -d
    ```

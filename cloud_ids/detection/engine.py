@@ -75,18 +75,19 @@ class RuleManager:
                 return self._cache
 
             try:
-                from models.detection_rule import DetectionRule
-                rules = DetectionRule.query.filter_by(enabled=True).all()
-                self._cache = [
-                    {
-                        "id": r.id,
-                        "rule_type": r.rule_type,
-                        "threshold": r.threshold,
-                        "window": r.window,
-                        "severity": r.severity,
-                    }
-                    for r in rules
-                ]
+                with self.app.app_context():
+                    from models.detection_rule import DetectionRule
+                    rules = DetectionRule.query.filter_by(enabled=True).all()
+                    self._cache = [
+                        {
+                            "id": r.id,
+                            "rule_type": r.rule_type,
+                            "threshold": r.threshold,
+                            "window": r.window,
+                            "severity": r.severity,
+                        }
+                        for r in rules
+                    ]
                 self._cache_expires_at = now + RULE_CACHE_TTL
                 return self._cache
             except Exception as exc:
