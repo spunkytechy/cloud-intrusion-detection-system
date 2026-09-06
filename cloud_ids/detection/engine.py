@@ -68,27 +68,38 @@ class RuleManager:
         self._lock = threading.Lock()
 
     def get_enabled(self) -> list:
-        """Return enabled rule dicts from the DB, using the cache when fresh."""
+        """
+        Return enabled rule dicts from the DB, using the cache when fresh.
+
+        Must be called while an app context is already active — the
+        analyzer loop owns that context. Do NOT open a nested context
+        here; doing so creates a separate SQLAlchemy session that can't
+        see uncommitted data from the outer session.
+        """
         now = datetime.now(timezone.utc).timestamp()
         with self._lock:
             if self._cache and now < self._cache_expires_at:
                 return self._cache
 
             try:
-                with self.app.app_context():
-                    from models.detection_rule import DetectionRule
-                    rules = DetectionRule.query.filter_by(enabled=True).all()
-                    self._cache = [
-                        {
-                            "id": r.id,
-                            "rule_type": r.rule_type,
-                            "threshold": r.threshold,
-                            "window": r.window,
-                            "severity": r.severity,
-                        }
-                        for r in rules
-                    ]
+                # No app_context() here — rely on caller's context
+                from models.detection_rule import DetectionRule
+                rules = DetectionRule.query.filter_by(enabled=True).all()
+                self._cache = [
+                    {
+                        "id":        r.id,
+                        "rule_type": r.rule_type,
+                        "threshold": r.threshold,
+                        "window":    r.window,
+                        "severity":  r.severity,
+                    }
+                    for r in rules
+                ]
                 self._cache_expires_at = now + RULE_CACHE_TTL
+                logger.debug(
+                    "RuleManager: loaded %d enabled rules from DB.",
+                    len(self._cache),
+                )
                 return self._cache
             except Exception as exc:
                 logger.error("RuleManager reload failed: %s", exc)

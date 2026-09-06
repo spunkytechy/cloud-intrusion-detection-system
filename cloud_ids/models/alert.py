@@ -233,3 +233,21 @@ class Alert(TimestampMixin, BaseModel):
             .all()
         )
         return {row.threat_type: row.cnt for row in rows}
+
+    def to_dict(self) -> dict:
+        """Serialise alert to a plain dict safe for JSON responses."""
+        return {
+            "alert_id":       self.alert_id,
+            "threat_type":    self.threat_type,
+            "source_ip":      self.source_ip,
+            "severity":       self.severity,
+            "message":        self.message,
+            "time_detected":  self.time_detected.isoformat() if self.time_detected else None,
+            "acknowledged":   self.acknowledged,
+            "acknowledged_by": self.acknowledged_by,
+            "acknowledged_at": self.acknowledged_at.isoformat() if self.acknowledged_at else None,
+            "resolved":       self.resolved,
+            "false_positive": self.false_positive,
+            "email_sent":     self.email_sent,
+            "created_at":     self.created_at.isoformat() if self.created_at else None,
+        }
